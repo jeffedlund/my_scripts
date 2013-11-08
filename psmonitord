@@ -1,0 +1,203 @@
+#!/bin/sh
+#
+# psmonitord        This shell script takes care of starting and stopping
+#                    the background process.
+
+# Comments to support chkconfig on RedHat Linux
+# chkconfig: 2345 95 05
+# description: process Monitor
+# processname: psmonitord
+
+# Source function library.
+. /etc/init.d/functions
+
+#
+# Set some defaults
+
+EP_BASE=/mybasedirectory
+BINDIR="${EP_BASE}/bin"
+PID_FILE1="${EP_BASE}/var/PSMONITOR.PID"
+PID_FILE2="${EP_BASE}/var/JAVA_CLIENT.PID"
+PROC_FILE="${EP_BASE}/var/.MONITOR.PROC"
+LOGFILE="${EP_BASE}/log/psmonitor.log"
+
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin:${EP_BASE}:${BINDIR}
+export PATH
+
+USERNAME=`/usr/bin/whoami`
+
+mode=$1    # start or stop
+
+case "$mode" in
+  'start')
+	PID=`cat $PID_FILE1 2>/dev/null`
+	if [ ${PID} ]
+	then
+	   /bin/ps -e | /bin/grep ${PID} | /bin/grep "psmonitor.pl" > /dev/null
+	   TEST_PROC_RC=$?
+	fi
+	if [ -s $PID_FILE1 ] &&  [ $TEST_PROC_RC -eq 0 ]
+        then
+            /bin/echo -n "... Error! "
+            echo "psmonitor.pl process already running! "
+            echo "If you wish to stop the service "
+            echo "Execute the command:  service psmonitord stop"
+            exit 1
+        else
+            # Empty any stall ePrescribe process files that may remain from a 
+            # hard system shutdown.
+            # (if files exist and have size greater than zero -> then clear them)
+            if [ -s $PID_FILE1 ] || [ -s $PID_FILE2 ]
+            then
+                 cat /dev/null > $PID_FILE1
+                 cat /dev/null > $PID_FILE2
+                 echo "STOPPED" > $PROC_FILE
+
+            fi
+        fi
+    # Start daemon
+      /bin/echo -n "Starting psmonitor.pl process ..."
+
+
+         # clear PID files
+         cat /dev/null > $PID_FILE1
+
+         if test -x $BINDIR/psmonitor.pl
+         then
+            $BINDIR/psmonitor.pl $PID_FILE1 >/dev/null 2>&1 &
+            # Make lock for RedHat / SuSE
+            if test -w /var/lock/subsys
+            then
+                    touch /var/lock/subsys/psmonitord
+            fi
+         else
+           echo "Can't execute $BINDIR/psmonitor.pl from dir $EP_BASE"
+         fi
+
+             # pause up to 10 seconds to see if program starts normally
+             seconds=0
+             while [[ $seconds -lt 10 ]]
+             do
+                     check_proc=`cat $PROC_FILE`
+                      #/bin/echo -n "$check_proc"
+                      #echo $seconds
+                     /bin/echo -n "."
+                     if [[ "$check_proc" = "RUNNING" ]]
+                     then
+                             echo " OK. "
+                             exit 0
+                     fi
+
+                     sleep 1
+                     seconds=`expr ${seconds} + 1 `
+             done
+
+    # if script gets here an error has occurred
+    echo " Error! "
+    echo " ... psmonitor.pl process failed to start."
+
+
+
+    ;;
+
+  'stop')
+  if test -f /var/lock/subsys/psmonitord
+  then
+    # Stop daemon
+    if test -w "$PROC_FILE"
+    then
+       echo "EXIT" > $PROC_FILE
+    else
+      echo "Cannot write to PROC file:  $PROC_FILE"
+      exit 2
+    fi
+
+      /bin/echo -n "Stopping psmonitor.pl process ..."
+
+      # delete lock for RedHat / SuSE
+      if test -f /var/lock/subsys/psmonitord
+      then
+        rm -f /var/lock/subsys/psmonitord
+      fi
+
+	# wait up 15 seconds to stop
+	# otherwise exit
+	#
+	# initialize seconds
+	seconds=0
+
+	while [[ $seconds -lt 15 ]]
+	do
+		check_proc=`cat $PROC_FILE`
+		# /bin/echo -n "$check_proc"
+		# echo $seconds
+		/bin/echo -n "."
+		if [[ "$check_proc" = "STOPPED" ]]
+		then
+			echo " Done. "
+			cat /dev/null > $PID_FILE1
+
+
+			exit 0
+	 	fi
+
+		sleep 1
+		seconds=`expr ${seconds} + 1 `
+	done
+
+	# force termination of processes if the script gets this far
+	PID1=`cat $PID_FILE1 2>/dev/null`
+        if [ -s $PID_FILE1 ]  &&  [ `/bin/ps -e | /bin/grep $PID1 | /bin/grep "psmonitor.pl"` ]
+        then
+		kill -9 $PID1
+        fi
+
+	cat /dev/null > $PID_FILE1
+
+       echo "STOPPED" > $PROC_FILE
+
+	# If get this far, psmonitor may be frozen
+	# execute Reset_psmonitor program for a reset
+
+        # ?????  reset command
+
+	echo
+	echo " Attention ... psmonitor.pl process didn't terminate correctly"
+	echo " and needed to be killed."
+  
+  else
+	echo
+        echo "psmonitord : is NOT running."
+	echo "If you wish to start the service"
+	echo "Execute the command:  service psmonitord start"
+  fi
+
+    ;;
+
+  'restart')
+    # Stop the service and regardless of whether it was
+    # running or not, start it again.
+    $0 stop
+    $0 start
+
+    ;;
+
+  'status')
+    #
+	check_proc=`cat $PROC_FILE`
+	if [[ "$check_proc" = "STOPPED" ]]
+		then
+			echo "psmonitor is Stopped."
+		else
+			echo "psmonitor is Running."
+	 	fi
+
+   ;;
+
+  *)
+    # usage
+    echo "Usage: $0 start|stop|restart|status"
+    exit 1
+    ;;
+esac
